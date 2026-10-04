@@ -56,17 +56,11 @@ class ConnectionManager:
     def disconnect(self, user_id):
         self.activate_connections.pop(user_id, None)
 
-    async def send_message(self, user_id, message):
-        websocket = self.activate_connections.get(user_id)
-        if websocket:
-            await websocket.send_text(message)
-
     async def broadcast(self, message):
         for websocket in self.activate_connections.values():
             await websocket.send_text(message)
 
 manager = ConnectionManager()
-
 
 @app.websocket("/ws/{user_id}")
 async def websocket_endpoint(websocket: WebSocket, user_id: int):
@@ -95,6 +89,7 @@ async def websocket_endpoint(websocket: WebSocket, user_id: int):
             })
 
             await manager.broadcast(message_data)
+
     except Exception:
         manager.disconnect(user_id)
 
@@ -109,29 +104,6 @@ async def get_users():
         users = result.scalars().all()
 
         return users
-
-@app.post("/messages", response_model=MessageResponse)
-async def create_message(message: MessageCreate):
-    async with SessionLocal() as session:
-        result = await session.execute(select(User).where(User.id == message.sender_id))
-        user = result.scalar_one_or_none()
-
-        if user is None:
-            raise HTTPException(
-                status_code=404,
-                detail="User not found"
-            )
-
-        new_msg = Message(
-            sender_id = message.sender_id,
-            content = message.content
-        )
-
-        session.add(new_msg)
-        await session.commit()
-        await session.refresh(new_msg)
-
-        return new_msg
 
 @app.get("/messages", response_model=list[MessageResponse])
 async def get_messages():
