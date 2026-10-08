@@ -10,11 +10,8 @@ from models import User, Message
 
 from schemas import (
     UserResponse,
-    MessageCreate,
     MessageResponse
 )
-
-print("RUNNING FILE:", __file__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -112,11 +109,3 @@ async def get_messages():
         messages = results.scalars().all()
 
         return messages
-
-print("REGISTERED ROUTES:")
-
-for route in app.routes:
-    print(
-        type(route).__name__,
-        route.path
-    )

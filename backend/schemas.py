@@ -9,10 +9,6 @@ class UserResponse(BaseModel):
         "from_attributes": True
     }
 
-class MessageCreate(BaseModel):
-    sender_id: int
-    content: str
-
 class MessageResponse(BaseModel):
     id: int
     sender_id: int

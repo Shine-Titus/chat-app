@@ -1,99 +1,142 @@
 import { useEffect, useState, useRef } from 'react';
+import { Client } from "@stomp/stompjs";
 import "./app.css"
+import Login from "./login.jsx"
+
+const API = "http://localhost:8080";
 
 function App() {
 
-  const [users, setUsers] = useState([]);
   const [currentUser, setCurrentUser] = useState(null);
   const [messages, setMessages] = useState([]);
   const [messageText, setMessageText] = useState("");
-  const socketRef = useRef(null);
+  const [authChecked, setauthChecked] = useState(false);
+  const [loginError, setLoginError] = useState("");
+  const stompClientRef = useRef(null);
 
   useEffect(() => {
-    fetch("http://localhost:8000/users")
-      .then((response) => response.json())
-      .then((data) => {
-        setUsers(data);
-      });
+    fetch(`${API}/auth/me`, { credentials: "include" })
+      .then((response) => (response.ok ? response.json() : null))
+      .then(setCurrentUser)
+      .catch(() => setCurrentUser(null))
+      .finally(() => setauthChecked(true));
   }, []);
 
   useEffect(() => {
     if (!currentUser) return;
 
-    fetch("http://localhost:8000/messages")
-      .then((response) => response.json())
-      .then((data) => {
-        setMessages(data);
-      });
+    fetch(`${API}/messages`, { credentials: "include" })
+      .then((response) => {
+        if (response.status === 403) {
+          setCurrentUser(null);
+          setLoginError("Your session ended. Please sign in again.");
+          throw new Error("Session ended");
+        }
+        return response.json()
+      })
+      .then(setMessages)
+      .catch(() => { });
+
   }, [currentUser]);
 
   useEffect(() => {
     if (!currentUser) return;
 
-    const ws = new WebSocket(
-      `ws://127.0.0.1:8000/ws/${currentUser.id}`
-    );
+    const client = new Client({
+      brokerURL: "ws://localhost:8080/ws",
 
-    ws.onopen = () => {
-      console.log("WebSocket connected");
-    };
+      onConnect: () => {
+        console.log("STOMP connected");
 
-    ws.onmessage = (event) => {
-      const newMessage = JSON.parse(event.data);
+        client.subscribe("/topic/messages", (message) => {
+          const newMessage = JSON.parse(message.body);
 
-      setMessages((previousMessages) => [
-        ...previousMessages,
-        {
-          ...newMessage,
-        },
-      ]);
-    };
+          setMessages((previousMessages) => [
+            ...previousMessages,
+            newMessage,
+          ]);
+        });
+      },
 
-    ws.onclose = () => {
-      console.log("WebSocket disconnected");
-    };
+      onDisconnect: () => {
+        console.log("STOMP disconnected");
+      },
 
-    socketRef.current = ws;
+      onStompError: (frame) => {
+        console.error("STOMP error:", frame);
+      },
+    });
+
+    client.activate();
+
+    stompClientRef.current = client;
 
     return () => {
-      ws.close();
-      socketRef.current = null;
+      client.deactivate();
+      stompClientRef.current = null;
     };
   }, [currentUser]);
 
-  const sendMessage = () => {
+  const handleLogin = async (username, password) => {
+    setLoginError("");
+    try {
+      const res = await fetch(`${API}/auth/login`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, password }),
+      });
+
+      if (res.status === 401) return setLoginError("Invalid username or password");
+      if (!res.ok) return setLoginError("Something went wrong. Try again.");
+
+      const me = await fetch(`${API}/auth/me`, { credentials: "include" });
+      setCurrentUser(await me.json());
+    } catch {
+      setLoginError("Cannot reach the server");
+    }
+  };
+
+  const handleLogout = async () => {
+    await fetch(`${API}/auth/logout`, { method: "POST", credentials: "include" });
+    setCurrentUser(null);
+    setMessages([]);
+  };
+
+  const sendMessage = async () => {
     if (!messageText.trim()) return;
 
-    const ws = socketRef.current;
+    const res = await fetch(`${API}/auth/me`, { credentials: "include" }).catch(() => null);
 
-    if (!ws || ws.readyState !== WebSocket.OPEN) {
-      console.log("WebSocket not connected");
+    if (!res || !res.ok) {
+      setLoginError("Your session ended. Please sign in again.");
+      setCurrentUser(null);
+      setMessages([]);
       return;
     }
 
-    console.log("Sending:", messageText);
+    const client = stompClientRef.current;
+    if (!client || !client.connected) {
+      console.log("STOMP not connected");
+      return;
+    }
 
-    ws.send(messageText);
+    client.publish({
+      destination: "/app/chat",
+      body: JSON.stringify({
+        senderId: currentUser.id,
+        content: messageText,
+      }),
+    });
 
     setMessageText("");
   };
 
 
-  if (!currentUser) {
-    return (
-      <div className="user-selection">
-        <h1>Choose User</h1>
+  if (!authChecked) return null;
 
-        {users.map((user) => (
-          <button
-            key={user.id}
-            onClick={() => setCurrentUser(user)}
-          >
-            {user.username}
-          </button>
-        ))}
-      </div>
-    );
+  if (!currentUser) {
+    return <Login onLogin={handleLogin} error={loginError} />;
   }
 
   return (
@@ -105,9 +148,9 @@ function App() {
 
         <button
           className="switch-button"
-          onClick={() => setCurrentUser(null)}
+          onClick={handleLogout}
         >
-          Switch User
+          Logout
         </button>
       </div>
 
@@ -115,18 +158,19 @@ function App() {
         {messages.map((message) => (
           <div
             key={message.id}
-            className={`message ${message.sender_id === currentUser.id
+            className={`message ${message.senderId === currentUser.id
               ? "message-you"
               : "message-other"
               }`}
           >
             <strong>
-              {message.sender_id === currentUser.id
+              {message.senderId === currentUser.id
                 ? "You"
                 : "Other user"}
             </strong>
 
             <p>{message.content}</p>
+
           </div>
         ))}
       </div>
@@ -139,7 +183,7 @@ function App() {
           placeholder="Type a message..."
         />
 
-        <button onClick={sendMessage}>
+        <button onClick={sendMessage} onKeyDown={(e) => e.key === "Enter" && sendMessage()}>
           Send
         </button>
       </div>
