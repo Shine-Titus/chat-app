@@ -2,6 +2,7 @@ import { useEffect, useState, useRef } from 'react';
 import { Client } from "@stomp/stompjs";
 import "./app.css"
 import Login from "./login.jsx"
+import Register from "./register.jsx"
 
 const API = "http://localhost:8080";
 
@@ -12,7 +13,14 @@ function App() {
   const [messageText, setMessageText] = useState("");
   const [authChecked, setauthChecked] = useState(false);
   const [loginError, setLoginError] = useState("");
+  const [selectedUser, setSelectedUser] = useState(null);
+  const [users, setUsers] = useState([]);
+  const [showRegister, setShowRegister] = useState(false);
+  const [query, setQuery] = useState("");
+  const [onlineUsers, setOnlineUsers] = useState(new Set());
+
   const stompClientRef = useRef(null);
+  const selectedUserRef = useRef(null);
 
   useEffect(() => {
     fetch(`${API}/auth/me`, { credentials: "include" })
@@ -25,7 +33,7 @@ function App() {
   useEffect(() => {
     if (!currentUser) return;
 
-    fetch(`${API}/messages`, { credentials: "include" })
+    fetch(`${API}/users/users`, { credentials: "include" })
       .then((response) => {
         if (response.status === 403) {
           setCurrentUser(null);
@@ -34,10 +42,43 @@ function App() {
         }
         return response.json()
       })
-      .then(setMessages)
-      .catch(() => { });
+      .then(setUsers)
+      .catch(() => { })
+
+    fetch(`${API}/users/online`, { credentials: "include" })
+      .then((response) => {
+        if (response.status === 403) {
+          setCurrentUser(null);
+          setLoginError("Your session ended. Please sign in again.");
+          throw new Error("Session ended");
+        }
+        return response.json()
+      })
+      .then((list) => setOnlineUsers(new Set(list)))
+      .catch(() => { })
 
   }, [currentUser]);
+
+  useEffect(() => {
+    if (!selectedUser) return;
+
+    fetch(`${API}/messages/${selectedUser.id}`, { credentials: "include" })
+      .then((response) => {
+        if (response.status === 403) {
+          setCurrentUser(null);
+          setLoginError("Your session ended. Please sign in again.");
+          setSelectedUser(null);
+          throw new Error("Session ended");
+        }
+        return response.json()
+      })
+      .then(setMessages)
+      .catch(() => { })
+  }, [selectedUser]);
+
+  useEffect(() => {
+    selectedUserRef.current = selectedUser;
+  }, [selectedUser]);
 
   useEffect(() => {
     if (!currentUser) return;
@@ -48,14 +89,34 @@ function App() {
       onConnect: () => {
         console.log("STOMP connected");
 
-        client.subscribe("/topic/messages", (message) => {
+        client.subscribe("/user/queue/messages", (message) => {
           const newMessage = JSON.parse(message.body);
+          const open = selectedUserRef.current;
 
-          setMessages((previousMessages) => [
-            ...previousMessages,
-            newMessage,
-          ]);
+          if (open && (newMessage.senderId === open.id || newMessage.receiverId === open.id)) {
+            setMessages((prev) => [...prev, newMessage]);
+          }
         });
+
+        client.subscribe("/user/queue/kicked", () => {
+          setLoginError("You were signed out because you signed in elsewhere.");
+          setCurrentUser(null);
+          setSelectedUser(null);
+          setUsers([]);
+          setMessages([]);
+        });
+
+        client.subscribe("/topic/presence", (frame) => {
+          const { username, online } = JSON.parse(frame.body);
+
+          setOnlineUsers((prev) => {
+            const next = new Set(prev);
+            if (online) next.add(username);
+            else next.delete(username);
+            return next;
+          });
+        });
+
       },
 
       onDisconnect: () => {
@@ -100,6 +161,8 @@ function App() {
   const handleLogout = async () => {
     await fetch(`${API}/auth/logout`, { method: "POST", credentials: "include" });
     setCurrentUser(null);
+    setSelectedUser(null);
+    setUsers([]);
     setMessages([]);
   };
 
@@ -124,7 +187,7 @@ function App() {
     client.publish({
       destination: "/app/chat",
       body: JSON.stringify({
-        senderId: currentUser.id,
+        receiverId: selectedUser.id,
         content: messageText,
       }),
     });
@@ -132,26 +195,80 @@ function App() {
     setMessageText("");
   };
 
+  const goBack = () => {
+    setMessages([]);
+    setSelectedUser(null);
+    setQuery("");
+  }
+
+  const filteredChats = users.filter((user) =>
+    user.mobile.toLowerCase().includes(query.toLowerCase())
+  );
 
   if (!authChecked) return null;
 
   if (!currentUser) {
-    return <Login onLogin={handleLogin} error={loginError} />;
+    return showRegister
+      ? <Register onBack={() => setShowRegister(false)} />
+      : <Login onLogin={handleLogin} error={loginError} onShowRegister={() => setShowRegister(true)} />;
   }
+
+  if (!selectedUser) {
+    return (
+      <div className="chat-container">
+        <div className="chat-header">
+          <h1>My Chats, {currentUser.username}</h1>
+          <button className="switch-button" onClick={handleLogout}>
+            Logout
+          </button>
+        </div>
+
+        <input
+          className="mobile-search"
+          type="text"
+          placeholder="Search by mobile number..."
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          style={{
+            width: "100%",
+            padding: "10px",
+            marginBottom: "15px",
+            borderRadius: "4px",
+            border: "none",
+          }}
+        />
+
+        <div className="user-list">
+          {filteredChats.length === 0 && <p className="user-list-empty">No other users yet.</p>}
+
+          {filteredChats.map((user) => (
+            <button key={user.id} className="user-item" onClick={() => setSelectedUser(user)}>
+              <span className={`status-dot ${onlineUsers.has(user.username) ? "online" : "offline"}`} />
+              <span className="user-name">{user.username}</span>
+            </button>
+          ))}
+        </div>
+
+      </div>
+    );
+  }
+
+  console.log(onlineUsers);
 
   return (
 
     <div className="chat-container">
 
       <div className="chat-header">
-        <h1>Welcome, {currentUser.username}</h1>
+        <div className="header-left">
+          <h1>Chat with, {selectedUser.username}</h1>
+          <span className={`status-dot ${onlineUsers.has(selectedUser.username) ? "online" : "offline"}`} />
+        </div>
 
-        <button
-          className="switch-button"
-          onClick={handleLogout}
-        >
-          Logout
-        </button>
+        <div className="header-actions">
+          <button className="switch-button" onClick={goBack}>Back</button>
+          <button className="switch-button" onClick={handleLogout}>Logout</button>
+        </div>
       </div>
 
       <div className="messages">
@@ -166,7 +283,7 @@ function App() {
             <strong>
               {message.senderId === currentUser.id
                 ? "You"
-                : "Other user"}
+                : `${selectedUser.username}`}
             </strong>
 
             <p>{message.content}</p>
@@ -180,10 +297,10 @@ function App() {
           type="text"
           value={messageText}
           onChange={(event) => setMessageText(event.target.value)}
+          onKeyDown={(e) => e.key === "Enter" && sendMessage()}
           placeholder="Type a message..."
         />
-
-        <button onClick={sendMessage} onKeyDown={(e) => e.key === "Enter" && sendMessage()}>
+        <button onClick={sendMessage} >
           Send
         </button>
       </div>
