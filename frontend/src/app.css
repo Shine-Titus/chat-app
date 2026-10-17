@@ -327,3 +327,96 @@ input {
 .status-dot.offline {
     background: #9ca3af;
 }
+
+/* group creation form */
+
+.group-form {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 14px;
+    overflow-y: auto;
+}
+
+.group-form>input {
+    padding: 11px 14px;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    outline: none;
+}
+
+.group-form>input:focus {
+    border-color: #2563eb;
+}
+
+.group-hint {
+    margin: 4px 0 0;
+    font-size: 14px;
+    color: #666;
+}
+
+.group-form .user-list {
+    padding: 0;
+}
+
+.group-form .user-item input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    accent-color: #2563eb;
+}
+
+.create-group-button {
+    padding: 11px;
+    border: none;
+    border-radius: 8px;
+    background: #2563eb;
+    color: white;
+    cursor: pointer;
+}
+
+.create-group-button:hover {
+    background: #1d4ed8;
+}
+
+.member-row {
+    cursor: default;
+}
+
+.member-row .user-name {
+    flex: 1;
+}
+
+.badge {
+    font-size: 12px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: #e0e7ff;
+    color: #2563eb;
+}
+
+.danger-button {
+    padding: 6px 12px;
+    border: none;
+    border-radius: 6px;
+    background: #fdecea;
+    color: #b3261e;
+    cursor: pointer;
+}
+
+.danger-button:hover {
+    background: #f9d0cc;
+}
+
+.readonly-bar {
+    padding: 14px;
+    text-align: center;
+    color: #666;
+    background: #f4f6f8;
+    border-top: 1px solid #eee;
+}
+
+.removed-tag {
+    font-size: 12px;
+    color: #888;
+}
